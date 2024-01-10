@@ -211,12 +211,12 @@ $(foreach target, $(TARGETS), $(call define_target, $(target)))
 # Flash the program
 flash: $(OUTPUT_DIRECTORY)/nrf51822_xxac.hex
 	@echo Flashing: $<
-	openocd -d2 -f interface/stlink-v2-1.cfg -c "transport select hla_swd; set WORKAREASIZE 0x4000;" -f target/nrf51.cfg -c "init; halt; flash write_image erase $< ; mww 0x4001e504 1 ; mww 0x10001000 0x0001B000; mww 0x10001008 0xffffff00; mww 0x4001e504 0; reset run"
+	openocd -d2 -f interface/stlink-v2-1.cfg -c "transport select hla_swd; set WORKAREASIZE 0x4000;" -f target/nrf51.cfg -c "init; reset halt; flash write_image erase $< ; mww 0x4001e504 1 ; mww 0x10001000 0x0001B000; mww 0x10001008 0xffffff00; mww 0x4001e504 0; reset run"
 
 # Flash softdevice and the program
 flash_softdevice: $(OUTPUT_DIRECTORY)/nrf51822_xxac.hex
 	@echo Flashing: s130_nrf51_2.0.1_softdevice.hex
-	openocd -d2 -f interface/stlink-v2-1.cfg -c "transport select hla_swd; set WORKAREASIZE 0x4000;" -f target/nrf51.cfg -c "init; halt; nrf51 mass_erase; flash write_image $(SDK_ROOT)/components/softdevice/s130/hex/s130_nrf51_2.0.1_softdevice.hex 0; flash write_image $< ; mww 0x4001e504 1 ; mww 0x10001000 0x0001B000; mww 0x10001008 0xffffff00; mww 0x4001e504 0; reset run"
+	openocd -d2 -f interface/stlink-v2-1.cfg -c "transport select hla_swd; set WORKAREASIZE 0x4000;" -f target/nrf51.cfg -c "init; reset halt; nrf51 mass_erase; flash write_image $(SDK_ROOT)/components/softdevice/s130/hex/s130_nrf51_2.0.1_softdevice.hex 0; flash write_image $< ; mww 0x4001e504 1 ; mww 0x10001000 0x0001B000; mww 0x10001008 0xffffff00; mww 0x4001e504 0; reset run"
 
 erase:
 	nrfjprog --eraseall -f nrf52
