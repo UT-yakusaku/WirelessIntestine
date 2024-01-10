@@ -617,6 +617,24 @@ static void power_manage(void)
 }
 
 
+
+static void ble_attempt_to_send(uint8_t * data, uint8_t length)
+{
+    uint32_t err_code;
+    
+    err_code = ble_nus_string_send(&m_nus, data,length);
+    
+    if(err_code == BLE_ERROR_NO_TX_PACKETS)
+    {
+        /* ble tx buffer full*/
+    }                   
+    else if (err_code != NRF_ERROR_INVALID_STATE)
+	{
+        APP_ERROR_CHECK(err_code);   
+    }
+}
+
+
 /**@brief Application main function.
  */
 int main(void)
@@ -642,7 +660,8 @@ int main(void)
     // Enter main loop.
     for (;;)
     {
-        power_manage();
+        ble_attempt_to_send("AAAAAAAAAAAAAAAAAAAA", 20);
+        //power_manage();
     }
 }
 
