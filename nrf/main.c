@@ -65,6 +65,7 @@
 #include "app_util_platform.h"
 #include "bsp.h"
 #include "bsp_btn_ble.h"
+#include "drivers_nrf/timer/nrf_drv_timer.h"
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT 0                                           /**< Include the service_changed characteristic. If not enabled, the server's database cannot be changed for the lifetime of the device. */
 
@@ -617,6 +618,11 @@ static void power_manage(void)
 }
 
 
+void timer_void_event_handler(nrf_timer_event_t event_type, void * p_context)
+{
+    printf("\r\ntimer_void_event_handler!\r\n");
+}
+
 
 static void ble_attempt_to_send(uint8_t * data, uint8_t length)
 {
@@ -632,6 +638,25 @@ static void ble_attempt_to_send(uint8_t * data, uint8_t length)
 	{
         APP_ERROR_CHECK(err_code);   
     }
+}
+
+
+static void timer_init(void)
+{
+    uint32_t err_code;
+
+    nrf_drv_timer_config_t timer_cfg = NRF_DRV_TIMER_DEFAULT_CONFIG;
+    timer_cfg.frequency = NRF_TIMER_FREQ_31250Hz;
+    //timer_cfg.mode = NRF_TIMER_MODE_COUNTER;
+    timer_cfg.bit_width = NRF_TIMER_BIT_WIDTH_32;
+
+    const nrf_drv_timer_t m_timer = NRF_DRV_TIMER_INSTANCE(1);
+    err_code = nrf_drv_timer_init(&m_timer, &timer_cfg, timer_void_event_handler);
+    if(err_code != NRF_SUCCESS)
+    {
+        APP_ERROR_CHECK(err_code);
+    }
+    nrf_drv_timer_enable(&m_timer);
 }
 
 
@@ -652,16 +677,32 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
+    timer_init();
 
     printf("\r\nUART Start!\r\n");
     err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
     APP_ERROR_CHECK(err_code);
 
+    const nrf_drv_timer_t m_timer = NRF_DRV_TIMER_INSTANCE(1);
+
     // Enter main loop.
     for (;;)
     {
-        ble_attempt_to_send("AAAAAAAAAAAAAAAAAAAA", 20);
-        //power_manage();
+        uint32_t p_ticks;
+        unsigned char buf[20];
+        p_ticks = nrf_drv_timer_capture(&m_timer, NRF_TIMER_CC_CHANNEL0);
+        //sprintf(buf, "%d \r\n", p_ticks);
+
+        /*
+        uint8_t p_ticks_array[4];
+        p_ticks_array[0] = (p_ticks & 0xFF000000) >> 24;
+        p_ticks_array[1] = (p_ticks & 0x00FF0000) >> 16;
+        p_ticks_array[2] = (p_ticks & 0x0000FF00) >> 8;
+        p_ticks_array[3] = (p_ticks & 0x000000FF);
+        */
+        
+        ble_attempt_to_send(&p_ticks, 2);
+        power_manage();
     }
 }
 
