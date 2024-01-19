@@ -66,6 +66,7 @@
 #include "bsp.h"
 #include "bsp_btn_ble.h"
 #include "drivers_nrf/timer/nrf_drv_timer.h"
+#include "drivers_nrf/twi_master/nrf_drv_twi.h"
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT 0                                           /**< Include the service_changed characteristic. If not enabled, the server's database cannot be changed for the lifetime of the device. */
 
@@ -104,6 +105,17 @@ static ble_nus_t                        m_nus;                                  
 static uint16_t                         m_conn_handle = BLE_CONN_HANDLE_INVALID;    /**< Handle of the current connection. */
 
 static ble_uuid_t                       m_adv_uuids[] = {{BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}};  /**< Universally unique service identifier. */
+
+#define TWI_INSTANCE_ID                 0                                           /* TWI instance ID. */
+#define TWI_TIMEOUT 			        10000 
+#define ADS1115_ADDR                    0x48U                                       /* Common addresses definition for temperature sensor. */
+#define SCL_PIN                         17
+#define SDA_PIN                         23
+
+
+static const nrf_drv_twi_t m_twi        = NRF_DRV_TWI_INSTANCE(TWI_INSTANCE_ID);    /* TWI instance. */
+volatile static bool twi_tx_done = false;
+volatile static bool twi_rx_done = false;
 
 
 /**@brief Function for assert macro callback.
@@ -659,6 +671,93 @@ static void timer_init(void)
     nrf_drv_timer_enable(&m_timer);
 }
 
+void ADS1115_set_mode(void)
+{
+    ret_code_t err_code;
+    uint32_t timeout = TWI_TIMEOUT;
+
+    /* Writing to LM75B_REG_CONF "0" set temperature sensor in NORMAL mode. */
+    uint8_t reg[3] = {0x01, 0x72, 0xE3};
+    err_code = nrf_drv_twi_tx(&m_twi, ADS1115_ADDR, reg, sizeof(reg), false);
+    APP_ERROR_CHECK(err_code);
+    
+    while((!twi_tx_done) && --timeout);
+    if(!timeout) return NRF_ERROR_TIMEOUT;
+    twi_tx_done = false;
+}
+
+void twi_handler(nrf_drv_twi_evt_t const * p_event, void * p_context)
+{
+    switch(p_event->type)
+    {
+        case NRF_DRV_TWI_EVT_DONE:
+            switch(p_event->xfer_desc.type)
+            {
+                case NRF_DRV_TWI_XFER_TX:
+                    twi_tx_done = true;
+                    break;
+                case NRF_DRV_TWI_XFER_TXTX:
+                    twi_tx_done = true;
+                    break;
+                case NRF_DRV_TWI_XFER_RX:
+                    twi_rx_done = true;
+                    break;
+                case NRF_DRV_TWI_XFER_TXRX:
+                    twi_rx_done = true;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case NRF_DRV_TWI_EVT_ADDRESS_NACK:
+            break;
+        case NRF_DRV_TWI_EVT_DATA_NACK:
+            break;
+        default:
+            break;
+    }
+}
+
+void twi_init (void)
+{
+    ret_code_t err_code;
+
+    const nrf_drv_twi_config_t twi_ads1115_config = {
+       .scl                = SCL_PIN,
+       .sda                = SDA_PIN,
+       .frequency          = NRF_TWI_FREQ_100K,
+       .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
+       .clear_bus_init     = false
+    };
+
+    err_code = nrf_drv_twi_init(&m_twi, &twi_ads1115_config, twi_handler, NULL);
+    APP_ERROR_CHECK(err_code);
+
+    nrf_drv_twi_enable(&m_twi);
+}
+
+static void read_sensor_data(uint16_t *sample)
+{
+    ret_code_t err_code;
+    uint32_t timeout = TWI_TIMEOUT;
+
+    uint8_t reg[1] = {0x00};
+    err_code = nrf_drv_twi_tx(&m_twi, ADS1115_ADDR, reg, sizeof(reg), false);
+    APP_ERROR_CHECK(err_code);
+
+    while((!twi_tx_done) && --timeout);
+    if(!timeout) return NRF_ERROR_TIMEOUT;
+    twi_tx_done = false;
+    timeout = TWI_TIMEOUT;
+
+    err_code = nrf_drv_twi_rx(&m_twi, ADS1115_ADDR, sample, sizeof(*sample));
+    APP_ERROR_CHECK(err_code);
+
+    while((!twi_rx_done) && --timeout);
+    if(!timeout) return NRF_ERROR_TIMEOUT;
+    twi_rx_done = false;
+}
+
 
 /**@brief Application main function.
  */
@@ -678,6 +777,8 @@ int main(void)
     advertising_init();
     conn_params_init();
     timer_init();
+    twi_init();
+    ADS1115_set_mode();
 
     printf("\r\nUART Start!\r\n");
     err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
@@ -688,9 +789,10 @@ int main(void)
     // Enter main loop.
     for (;;)
     {
-        uint32_t p_ticks;
+        uint16_t p_ticks;
         unsigned char buf[20];
         p_ticks = nrf_drv_timer_capture(&m_timer, NRF_TIMER_CC_CHANNEL0);
+        
         //sprintf(buf, "%d \r\n", p_ticks);
 
         /*
@@ -701,7 +803,10 @@ int main(void)
         p_ticks_array[3] = (p_ticks & 0x000000FF);
         */
         
-        ble_attempt_to_send(&p_ticks, 2);
+        uint16_t sample;
+        read_sensor_data(&sample);
+
+        ble_attempt_to_send(&sample, 2);
         power_manage();
     }
 }
