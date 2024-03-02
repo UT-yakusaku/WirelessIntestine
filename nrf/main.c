@@ -106,6 +106,9 @@ static uint16_t                         m_conn_handle = BLE_CONN_HANDLE_INVALID;
 
 static ble_uuid_t                       m_adv_uuids[] = {{BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}};  /**< Universally unique service identifier. */
 
+#define SAMPLE_RATE                     100
+#define LOOP_DURATION                   31250 / SAMPLE_RATE
+
 #define TWI_INSTANCE_ID                 0                                           /* TWI instance ID. */
 #define TWI_TIMEOUT 			        10000 
 #define ADS1115_ADDR                    0x48U                                       /* Common addresses definition for temperature sensor. */
@@ -758,6 +761,11 @@ static void read_sensor_data(uint16_t *sample)
     twi_rx_done = false;
 }
 
+struct Sample {
+    uint16_t sample;
+    uint16_t ticks;
+};
+
 
 /**@brief Application main function.
  */
@@ -785,29 +793,23 @@ int main(void)
     APP_ERROR_CHECK(err_code);
 
     const nrf_drv_timer_t m_timer = NRF_DRV_TIMER_INSTANCE(1);
+    uint16_t ticks_prev = 0;
 
     // Enter main loop.
     for (;;)
     {
-        uint16_t p_ticks;
+        struct Sample dat;
         unsigned char buf[20];
-        p_ticks = nrf_drv_timer_capture(&m_timer, NRF_TIMER_CC_CHANNEL0);
-        
-        //sprintf(buf, "%d \r\n", p_ticks);
 
-        /*
-        uint8_t p_ticks_array[4];
-        p_ticks_array[0] = (p_ticks & 0xFF000000) >> 24;
-        p_ticks_array[1] = (p_ticks & 0x00FF0000) >> 16;
-        p_ticks_array[2] = (p_ticks & 0x0000FF00) >> 8;
-        p_ticks_array[3] = (p_ticks & 0x000000FF);
-        */
+        dat.ticks = nrf_drv_timer_capture(&m_timer, NRF_TIMER_CC_CHANNEL0);
+        while((uint16_t)(dat.ticks - ticks_prev) < (uint16_t)LOOP_DURATION) {
+            dat.ticks = nrf_drv_timer_capture(&m_timer, NRF_TIMER_CC_CHANNEL0);
+        }
+        ticks_prev = dat.ticks;
         
-        uint16_t sample;
-        read_sensor_data(&sample);
+        read_sensor_data(&(dat.sample));
 
-        ble_attempt_to_send(&sample, 2);
-        power_manage();
+        ble_attempt_to_send(&dat, 4);
     }
 }
 
