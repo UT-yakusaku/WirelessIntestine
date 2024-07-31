@@ -82,7 +82,7 @@
 #define DEVICE_NAME                     "Nordic_UART"                               /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
-#define APP_ADV_INTERVAL                1024//64                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
+#define APP_ADV_INTERVAL                256//64                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
 #define APP_ADV_TIMEOUT_IN_SECONDS      0                                           /**< The advertising timeout (in units of seconds). */
 
 #define APP_TIMER_PRESCALER             0                                           /**< Value of the RTC1 PRESCALER register. */
@@ -115,11 +115,16 @@ static ble_uuid_t                       m_adv_uuids[] = {{BLE_UUID_NUS_SERVICE, 
 #define SCL_PIN                         17
 #define SDA_PIN                         23
 
+#define SWAP(a, b) do { a ^= b; b ^= a; a ^= b; } while(0)
 
 static const nrf_drv_twi_t m_twi        = NRF_DRV_TWI_INSTANCE(TWI_INSTANCE_ID);    /* TWI instance. */
 volatile static bool twi_tx_done = false;
 volatile static bool twi_rx_done = false;
 
+volatile static uint8_t data_buf[20];
+volatile static uint8_t data_buf_to_send[20];
+volatile static int8_t data_buf_seek = 0;
+volatile static bool data_send_lock = false;
 
 /**@brief Function for assert macro callback.
  *
@@ -655,26 +660,7 @@ static void ble_attempt_to_send(uint8_t * data, uint8_t length)
     }
 }
 
-
-static void timer_init(void)
-{
-    uint32_t err_code;
-
-    nrf_drv_timer_config_t timer_cfg = NRF_DRV_TIMER_DEFAULT_CONFIG;
-    timer_cfg.frequency = NRF_TIMER_FREQ_31250Hz;
-    //timer_cfg.mode = NRF_TIMER_MODE_COUNTER;
-    timer_cfg.bit_width = NRF_TIMER_BIT_WIDTH_32;
-
-    const nrf_drv_timer_t m_timer = NRF_DRV_TIMER_INSTANCE(1);
-    err_code = nrf_drv_timer_init(&m_timer, &timer_cfg, timer_void_event_handler);
-    if(err_code != NRF_SUCCESS)
-    {
-        APP_ERROR_CHECK(err_code);
-    }
-    nrf_drv_timer_enable(&m_timer);
-}
-
-void ADS1115_set_mode(void)
+uint32_t ADS1115_set_mode(void)
 {
     ret_code_t err_code;
     uint32_t timeout = TWI_TIMEOUT;
@@ -687,6 +673,7 @@ void ADS1115_set_mode(void)
     while((!twi_tx_done) && --timeout);
     if(!timeout) return NRF_ERROR_TIMEOUT;
     twi_tx_done = false;
+    return NRF_SUCCESS;
 }
 
 void twi_handler(nrf_drv_twi_evt_t const * p_event, void * p_context)
@@ -739,7 +726,7 @@ void twi_init (void)
     nrf_drv_twi_enable(&m_twi);
 }
 
-static void read_sensor_data(uint16_t *sample)
+static uint32_t read_sensor_data(uint8_t *sample)
 {
     ret_code_t err_code;
     uint32_t timeout = TWI_TIMEOUT;
@@ -753,18 +740,54 @@ static void read_sensor_data(uint16_t *sample)
     twi_tx_done = false;
     timeout = TWI_TIMEOUT;
 
-    err_code = nrf_drv_twi_rx(&m_twi, ADS1115_ADDR, sample, sizeof(*sample));
+    err_code = nrf_drv_twi_rx(&m_twi, ADS1115_ADDR, sample, 2);//sizeof(*sample));
     APP_ERROR_CHECK(err_code);
 
     while((!twi_rx_done) && --timeout);
     if(!timeout) return NRF_ERROR_TIMEOUT;
     twi_rx_done = false;
+    return NRF_SUCCESS;
+}
+
+void start_timer(void)
+{		
+    NRF_TIMER2->MODE = TIMER_MODE_MODE_Timer;  // Set the timer in Counter Mode
+    NRF_TIMER2->TASKS_CLEAR = 1;               // clear the task first to be usable for later
+	NRF_TIMER2->PRESCALER = 4;                             //Set prescaler. Higher number gives slower timer. Prescaler = 0 gives 16MHz timer
+	NRF_TIMER2->BITMODE = TIMER_BITMODE_BITMODE_16Bit;		 //Set counter to 16 bit resolution
+	NRF_TIMER2->CC[0] = 10000;                             //Set value for TIMER2 compare register 0
+		
+    // Enable interrupt on Timer 2, for CC[0] compare match events
+	NRF_TIMER2->INTENSET = (TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos);
+    NVIC_EnableIRQ(TIMER2_IRQn);
+    NVIC_SetPriority(TIMER2_IRQn, APP_IRQ_PRIORITY_LOW);
+		
+    NRF_TIMER2->TASKS_START = 1;               // Start TIMER2
+}
+
+void TIMER2_IRQHandler(void)
+{
+	if ((NRF_TIMER2->EVENTS_COMPARE[0] != 0) && ((NRF_TIMER2->INTENSET & TIMER_INTENSET_COMPARE0_Msk) != 0))
+    {
+		NRF_TIMER2->EVENTS_COMPARE[0] = 0;           //Clear compare register 0 event
+        read_sensor_data(data_buf + 2 * data_buf_seek); 
+        data_buf_seek++;
+        if (data_buf_seek >= 10) {
+            data_buf_seek = 0;
+            while(data_send_lock){}
+            for (int i = 0; i < 20; i++){
+                SWAP(data_buf[i], data_buf_to_send[i]);
+            }
+            data_send_lock = true;
+        }
+    }
 }
 
 struct Sample {
     uint16_t sample;
     uint16_t ticks;
 };
+
 
 
 /**@brief Application main function.
@@ -784,32 +807,24 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
-    timer_init();
     twi_init();
+    start_timer();
     ADS1115_set_mode();
 
     printf("\r\nUART Start!\r\n");
     err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
     APP_ERROR_CHECK(err_code);
 
-    const nrf_drv_timer_t m_timer = NRF_DRV_TIMER_INSTANCE(1);
-    uint16_t ticks_prev = 0;
-
     // Enter main loop.
     for (;;)
     {
-        struct Sample dat;
-        unsigned char buf[20];
-
-        dat.ticks = nrf_drv_timer_capture(&m_timer, NRF_TIMER_CC_CHANNEL0);
-        while((uint16_t)(dat.ticks - ticks_prev) < (uint16_t)LOOP_DURATION) {
-            dat.ticks = nrf_drv_timer_capture(&m_timer, NRF_TIMER_CC_CHANNEL0);
+        // uint8_t a[2];
+        // read_sensor_data(a);
+        // ble_attempt_to_send(a, 2);
+        if (data_send_lock) {
+            ble_attempt_to_send(data_buf_to_send, 20);
+            data_send_lock = false;
         }
-        ticks_prev = dat.ticks;
-        
-        read_sensor_data(&(dat.sample));
-
-        ble_attempt_to_send(&dat, 4);
     }
 }
 
