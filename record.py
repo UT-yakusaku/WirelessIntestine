@@ -24,10 +24,9 @@ load_dotenv()
 
 frame = None
 time_scale = 5.0
-packet_size = 9
 
 adc_multiplier = 0.125
-amp_resistance = 390.0
+amp_resistance = 430.0
 amp_gain = 1.0 + (100000.0 / amp_resistance)
 volt_coeff = adc_multiplier / amp_gain
 
@@ -35,9 +34,6 @@ camera_width = 1080
 camera_height = 1920
 
 lock = threading.Lock()
-
-ports = list_ports.comports()
-devices = [info.device for info in ports]
 
 class Application(tk.Frame):
     def __init__(self, master=None):
@@ -52,7 +48,7 @@ class Application(tk.Frame):
         self.deviceID = ""
         self.video_display = False
         self.graph_display = False
-        self.graph_interval = 10
+        self.graph_interval = 3
         self.graph_interval_cnt = 0
         self.cap = None
         self.com = None
@@ -95,10 +91,6 @@ class Application(tk.Frame):
 
         frame2 = ttk.Frame(self.master, padding=10)
         frame2.grid(row=1, column=0, sticky=tk.E)
-
-        combo_string = tk.StringVar()
-        self.combobox_dev = ttk.Combobox(frame2, textvariable=combo_string, values=devices)
-        self.combobox_dev.pack(side=tk.LEFT)
 
         self.DevGraphButton = ttk.Button(frame2, text="Show Graph", command=self.showgraph_clicked)
         self.DevGraphButton.pack(side=tk.LEFT)
@@ -176,8 +168,6 @@ class Application(tk.Frame):
     def record_clicked(self):
         if self.is_recording is False:
             if self.changecamera() is False:
-                return False
-            if self.changedevice() is False:
                 return False
             if self.setSaveDirectory() is False:
                 return False
@@ -262,18 +252,6 @@ class Application(tk.Frame):
         else:
             return False
 
-    def changedevice(self):
-        dev = self.combobox_dev.get()
-        if dev != "":
-            if self.deviceID == dev:
-                return True
-            with lock:
-                self.com = serial.Serial(dev, 115200)
-            self.deviceID = dev
-            return True
-        else:
-            return False
-
     def CameraIndexes(self):
         index = 0
         arr = []
@@ -332,23 +310,6 @@ class Application(tk.Frame):
             else: 
                 time.sleep(0.1)
 
-    def decodeCOBS(self, data):
-        zero = data[0]
-        if zero > 8: 
-            return False, data
-        for i in range(1, 8):
-            zero -= 1
-            if zero == 0:
-                zero = data[i]
-                data[i] = 0
-        # check sum
-        sum = 0
-        for i in range(1, 7):
-            sum += data[i]
-        if sum & 0xFF != data[7]:
-            return False, data
-        return True, data[1:7]
-
     def recordDevice(self, dat):
         self.device_data_f.write(dat)
         self.record_n_row += 1
@@ -370,63 +331,14 @@ class Application(tk.Frame):
         self.graph_x.clear()
         self.graph_y.clear()
 
-    # def appendRecord2Graph(self, val, time):
-    #     time = time + self.time_loop_cnt * 65536 - self.time_start_rec
-    #     if len(self.graph_x) > 0 and time / 32500.0 < self.graph_x[-1]:
-    #         self.time_loop_cnt += 1
-    #         time += 65536
-    #     self.graph_x.append(time / 32500.0)
-    #     self.graph_y.append(val * volt_coeff)
 
     def appendRecord2Graph(self, val, time, idx):
         time = time + self.time_loop_cnt * 65536 - self.time_start_rec
-        if len(self.graph_x) > 0 and time * 9 / 100 < self.graph_x[-1]:
+        if len(self.graph_x) > 0 and (time + 1) * 9 / 100 < self.graph_x[-1]:
             self.time_loop_cnt += 1
             time += 65536
         self.graph_x.append(time * 9 / 100 + idx / 100)
         self.graph_y.append(val * volt_coeff)
-
-    """
-    def ReadSerial(self):
-        try:
-            packet = b""
-            for i in range(9):
-                buf = self.com.read()
-                if buf == b'\x00' and i != 8:
-                    return
-                packet += buf
-            ret, dat = self.decodeCOBS(bytearray(packet))
-            if ret is False:
-                return
-            
-            if self.is_recording:
-                if self.record_time_diff is not None:
-                    self.recordDevice(dat + b"\x00\x00")
-                elif self.record_time_video is not None:
-                    self.record_time_diff = time.time_ns() - self.record_time_video
-                    self.recordInit(dat)
-                    self.recordDevice(dat + b"\x00\x00")
-
-            if self.graph_display:
-                self.graph_interval_cnt += 1
-                if self.graph_interval_cnt % self.graph_interval == 0:
-                    tim = struct.unpack('<L', dat[0:4])[0]
-                    val = struct.unpack('<h', dat[4:6])[0]
-                    self.appendRecord2Graph(val, tim)
-            
-        except:
-            print("Could not communicate with device.")
-
-    """
-
-    # def SerialProgram(self):
-    #     while True:
-    #         if self.halt_thread is True:
-    #             break
-    #         if self.ble_serial_start:
-    #             self.ble_loop.run_until_complete(self.ble_run(self.mac_address, self.ble_loop))
-    #             self.ble_serial_start = False
-    #         else: time.sleep(0.001)
 
     
     def run_ble_loop(self):
@@ -454,49 +366,32 @@ class Application(tk.Frame):
     def notification_handler(self, sender, data: bytearray):
 
         try:
-            # if len(data) < 9: return
-            # for i in range(9):
-            #     if data[i] == b'\x00' and i != 8:
-            #         return
-            # ret, dat = self.decodeCOBS(bytearray(data))
-            # if ret is False:
-            #     return
 
             val = []
 
             if len(data) < 20: return
             for i in range(9):
                 val.append(struct.unpack('>H', data[2 * i: 2 * i + 2])[0])
-                time = struct.unpack('<H', data[18:20])[0]
+                tim = struct.unpack('<H', data[18:20])[0]
 
             # data(2b) * 9 + timestamp(2b)
             
             if self.is_recording:
                 if self.record_time_diff is not None:
-                    self.recordDevice(data + b"\x00\x00")
+                    self.recordDevice(data + b"\x00\x00\x00\x00")
                 elif self.record_time_video is not None:
                     self.record_time_diff = time.time_ns() - self.record_time_video
                     self.recordInit(data)
-                    self.recordDevice(data + b"\x00\x00")
+                    self.recordDevice(data + b"\x00\x00\x00\x00")
 
             if self.graph_display:
                 for i in range(9):
                     self.graph_interval_cnt += 1
                     if self.graph_interval_cnt % self.graph_interval == 0:
-                        self.appendRecord2Graph(val[i], time, i)
-            #print(datetime.datetime.now())
+                        self.appendRecord2Graph(val[i], tim, i)
             
         except:
             print("Could not communicate with device.")
-
-    # async def ble_run(self, address, loop):
-    #     async with BleakClient(address, loop=loop) as client:
-    #         x = client.is_connected
-    #         print("Connected: {0}".format(x))
-    #         await client.start_notify("6e400003-b5a3-f393-e0a9-e50e24dcca9e", self.notification_handler)
-
-    #         while (self.graph_display or self.is_recording) and self.halt_thread is False:
-    #             await asyncio.sleep(0.001)
 
 
 root = tk.Tk()
