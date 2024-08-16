@@ -753,12 +753,13 @@ void start_timer(void)
 {		
     NRF_TIMER2->MODE = TIMER_MODE_MODE_Timer;  // Set the timer in Counter Mode
     NRF_TIMER2->TASKS_CLEAR = 1;               // clear the task first to be usable for later
-	NRF_TIMER2->PRESCALER = 4;                             //Set prescaler. Higher number gives slower timer. Prescaler = 0 gives 16MHz timer
+	NRF_TIMER2->PRESCALER = 3;                             //Set prescaler. Higher number gives slower timer. Prescaler = 0 gives 16MHz timer
 	NRF_TIMER2->BITMODE = TIMER_BITMODE_BITMODE_16Bit;		 //Set counter to 16 bit resolution
-	NRF_TIMER2->CC[0] = 10000;                             //Set value for TIMER2 compare register 0
+	NRF_TIMER2->CC[0] = 20000;                             //Set value for TIMER2 compare register 0
 		
     // Enable interrupt on Timer 2, for CC[0] compare match events
 	NRF_TIMER2->INTENSET = (TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos);
+    NRF_TIMER2->SHORTS = (TIMER_SHORTS_COMPARE0_CLEAR_Enabled << TIMER_SHORTS_COMPARE0_CLEAR_Pos);
     NVIC_EnableIRQ(TIMER2_IRQn);
     NVIC_SetPriority(TIMER2_IRQn, APP_IRQ_PRIORITY_LOW);
 		
@@ -772,10 +773,10 @@ void TIMER2_IRQHandler(void)
 		NRF_TIMER2->EVENTS_COMPARE[0] = 0;           //Clear compare register 0 event
         read_sensor_data(data_buf + 2 * data_buf_seek); 
         data_buf_seek++;
-        if (data_buf_seek >= 10) {
+        if (data_buf_seek >= 9) {
             data_buf_seek = 0;
             while(data_send_lock){}
-            for (int i = 0; i < 20; i++){
+            for (int i = 0; i < 18; i++){
                 SWAP(data_buf[i], data_buf_to_send[i]);
             }
             data_send_lock = true;
@@ -815,6 +816,8 @@ int main(void)
     err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
     APP_ERROR_CHECK(err_code);
 
+    uint16_t count = 0;
+
     // Enter main loop.
     for (;;)
     {
@@ -822,9 +825,15 @@ int main(void)
         // read_sensor_data(a);
         // ble_attempt_to_send(a, 2);
         if (data_send_lock) {
+            data_buf_to_send[18] = count % 256;
+            data_buf_to_send[19] = count / 256;
             ble_attempt_to_send(data_buf_to_send, 20);
+            count++;
             data_send_lock = false;
         }
+        __WFE();
+        __SEV();
+        __WFE();
     }
 }
 
