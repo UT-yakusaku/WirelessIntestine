@@ -1,0 +1,7 @@
+.vscode/*
+build/*
+env/*
+misc/*
+nrf/_build/*
+nrf/.env
+analysis_temp/*
