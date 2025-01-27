@@ -666,7 +666,7 @@ uint32_t ADS1115_set_mode(void)
     uint32_t timeout = TWI_TIMEOUT;
 
     /* Writing to LM75B_REG_CONF "0" set temperature sensor in NORMAL mode. */
-    uint8_t reg[3] = {0x01, 0x72, 0xE3};
+    uint8_t reg[3] = {0x01, 0x02, 0xE3};
     err_code = nrf_drv_twi_tx(&m_twi, ADS1115_ADDR, reg, sizeof(reg), false);
     APP_ERROR_CHECK(err_code);
     
